@@ -1,0 +1,10 @@
+node_modules
+dist
+*.local
+.DS_Store
+
+# Private profile — real personal financial data. NEVER commit this.
+src/data/profile.local.ts
+
+# Generated presentation decks — contain a data snapshot; regenerate as needed.
+*.pptx

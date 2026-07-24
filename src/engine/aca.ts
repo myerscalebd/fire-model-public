@@ -1,0 +1,32 @@
+import {
+  ACA_CLIFF_FPL,
+  ACA_CONTRIBUTION_SCHEDULE,
+  ACA_MEDICAID_FPL,
+  FPL_FAMILY_OF_4,
+} from "../data/taxTables";
+
+/**
+ * Net ACA family premium as a function of MAGI (post-2025 rules: expected
+ * contribution % of income for the benchmark plan, hard cliff at 400% FPL,
+ * Ohio Medicaid below ~138% FPL).
+ *
+ * `grossPremium` doubles as the benchmark-plan cost — a deliberate
+ * simplification; edit acaGrossPremium to calibrate against healthcare.gov.
+ */
+export function acaNetPremium(magi: number, grossPremium: number): number {
+  const fplRatio = magi / FPL_FAMILY_OF_4;
+  if (fplRatio <= ACA_MEDICAID_FPL) return 0; // Medicaid
+  if (fplRatio >= ACA_CLIFF_FPL) return grossPremium; // subsidy cliff
+
+  // Interpolate the expected-contribution percentage.
+  const s = ACA_CONTRIBUTION_SCHEDULE;
+  let pct = s[s.length - 1].incomePct;
+  for (let i = 0; i < s.length - 1; i++) {
+    if (fplRatio <= s[i + 1].fplPct) {
+      const w = (fplRatio - s[i].fplPct) / (s[i + 1].fplPct - s[i].fplPct);
+      pct = s[i].incomePct + w * (s[i + 1].incomePct - s[i].incomePct);
+      break;
+    }
+  }
+  return Math.min(grossPremium, pct * magi);
+}
