@@ -6,10 +6,10 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
+    "build:single": "npm run build && node scripts/inline-build.mjs",
     "preview": "vite preview",
     "test": "vitest run",
-    "test:watch": "vitest",
-    "make-public": "node scripts/make-public.mjs"
+    "test:watch": "vitest"
   },
   "dependencies": {
     "react": "^18.3.1",

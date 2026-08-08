@@ -5,6 +5,10 @@ import { deterministicPath } from "../engine/returns";
 import { buildContext, runPath } from "../engine/simulate";
 import type { MonteCarloSummary, SimInputs, SolveResult, TornadoRow } from "../engine/types";
 import { DeterministicView } from "./DeterministicView";
+import { handleJob } from "./engineJobs";
+import type { EngineJob, EngineJobSpec, EngineReply } from "./engineJobs";
+// Inlined (not a separate chunk) so a single-file build stays self-contained.
+import McWorker from "./mcWorker?worker&inline";
 import { InputsPanel } from "./InputsPanel";
 import { MonteCarloView } from "./MonteCarloView";
 import { ScenariosView } from "./ScenariosView";
@@ -44,11 +48,6 @@ function loadInputs(): SimInputs {
   return BASE_PROFILE;
 }
 
-type WorkerReply =
-  | { seq: number; kind: "mc"; summary: MonteCarloSummary }
-  | { seq: number; kind: "solve"; solve: SolveResult }
-  | { seq: number; kind: "tornado"; tornado: TornadoRow[] };
-
 export function App() {
   const [inputs, setInputs] = useState<SimInputs>(loadInputs);
   const [tab, setTab] = useState<"deterministic" | "montecarlo" | "scenarios" | "sensitivity">("deterministic");
@@ -58,7 +57,7 @@ export function App() {
   const [showWelcome, setShowWelcome] = useState(!HAS_LOCAL_PROFILE && !hasSavedSession());
   const workerRef = useRef<Worker | null>(null);
   const seqRef = useRef(0);
-  const pendingRef = useRef(new Map<number, (reply: WorkerReply) => void>());
+  const pendingRef = useRef(new Map<number, (reply: EngineReply) => void>());
   const latestMcSeqRef = useRef(0);
 
   useEffect(() => {
@@ -66,22 +65,41 @@ export function App() {
   }, [inputs]);
 
   useEffect(() => {
-    const w = new Worker(new URL("./mcWorker.ts", import.meta.url), { type: "module" });
+    let w: Worker;
+    try {
+      w = new McWorker();
+    } catch {
+      // No worker available (a host whose CSP forbids blob: workers, say).
+      // runJob falls back to the main thread; results are identical, but a run
+      // blocks paint for a few seconds instead of streaming in.
+      return;
+    }
     workerRef.current = w;
-    w.onmessage = (e: MessageEvent<WorkerReply>) => {
+    w.onmessage = (e: MessageEvent<EngineReply>) => {
       const resolve = pendingRef.current.get(e.data.seq);
       pendingRef.current.delete(e.data.seq);
       resolve?.(e.data);
     };
-    return () => w.terminate();
+    return () => {
+      workerRef.current = null;
+      w.terminate();
+    };
   }, []);
 
-  /** Post a job to the engine worker; resolves with its reply. */
-  const runJob = useCallback((job: Record<string, unknown>): Promise<WorkerReply> => {
+  /** Run a job on the engine worker, or on the main thread if there isn't one. */
+  const runJob = useCallback((job: EngineJobSpec): Promise<EngineReply> => {
     const seq = ++seqRef.current;
+    const worker = workerRef.current;
+    if (!worker) {
+      // Defer past paint so the caller's "running" state renders before the
+      // synchronous run locks the thread.
+      return new Promise((resolve) => {
+        setTimeout(() => resolve(handleJob({ ...job, seq } as EngineJob)), 0);
+      });
+    }
     return new Promise((resolve) => {
       pendingRef.current.set(seq, resolve);
-      workerRef.current?.postMessage({ seq, ...job });
+      worker.postMessage({ seq, ...job });
     });
   }, []);
 

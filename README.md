@@ -27,7 +27,42 @@ back to work), since returning to work is a survivable outcome, not a failure.
 npm install
 npm run dev        # → http://localhost:5173
 npm test           # engine unit tests
+npm run build      # typecheck + production build → dist/
 ```
+
+### Run it entirely in the cloud
+
+Everything above works unchanged in a [Claude Code on the web](https://code.claude.com/docs/en/claude-code-on-the-web)
+container — the engine is plain TypeScript, so tests and builds need no display.
+The one thing a cloud container can't give you is a browser pointed at
+`localhost:5173`; there's no port forwarding out of the sandbox. Two ways
+around that:
+
+**Build one self-contained file.**
+
+```
+npm run build:single   # → dist/standalone.html  (and dist/artifact.html)
+```
+
+`standalone.html` is the whole app — JS, CSS, and the Monte Carlo worker
+inlined, zero external requests. Open it over `file://`, mail it, or drop it on
+any static host. `artifact.html` is the same page as a `<body>` fragment, for
+hosts that supply their own document skeleton.
+
+**Drive it headlessly.** Chromium and Playwright are preinstalled in the web
+container, so an agent can start `npm run dev`, click through the tabs, and
+screenshot the result to check a UI change. Wait on `load`, not `networkidle` —
+Vite's HMR socket never goes idle.
+
+Dependencies install automatically in web sessions via
+[`.claude/hooks/session-start.sh`](.claude/hooks/session-start.sh). It uses
+`npm ci` rather than `npm install` deliberately: when the container's npm is
+older than the one that wrote `package-lock.json`, `install` silently rewrites
+the lockfile and every session starts with a dirty tree.
+
+Your real numbers never reach a cloud container, incidentally — `profile.local.ts`
+is gitignored and browser localStorage isn't there, so a web session always runs
+the neutral example household.
 
 ## Your data stays yours
 
@@ -50,26 +85,16 @@ There is **no backend**. Nothing you enter is ever sent anywhere; it lives only
 in your browser (and optionally your gitignored local file). If you host the
 static build (see below), each visitor's data stays in their own browser.
 
-## Sharing this repo publicly
+## Hosting it
 
-This repo's *git history* contains personal data from earlier commits, so don't
-just flip it public. Instead, publish a **fresh repo with clean history** from
-the sanitized working tree:
+This is the sanitized public copy: its history starts at the initial public
+release and contains no personal data. (The `make-public` script that produced
+it lives in the private source repo, not here.)
 
-```bash
-npm run make-public          # scaffolds ../fire-model-public (no .git, no private files)
-cd ../fire-model-public
-git init && git add -A && git commit -m "Initial public release"
-gh repo create fire-model --public --source=. --push   # or create on github.com and push
-```
-
-`make-public` excludes `.git`, `node_modules`, `dist`, `*.pptx`, and
-`profile.local.ts`, so the new repo starts with zero history and zero personal
-data. Keep *this* repo private for your own numbers.
-
-To host it (so friends get a URL, not a clone): `npm run build` and deploy the
-`dist/` folder to GitHub Pages / Netlify / Vercel. Still no backend — every
-user's data stays in their own browser.
+To give friends a URL rather than a clone, either deploy `dist/` from
+`npm run build` to GitHub Pages / Netlify / Vercel, or send the single file from
+`npm run build:single`. Still no backend either way — every visitor's data stays
+in their own browser.
 
 ## Layout
 
@@ -79,9 +104,12 @@ user's data stays in their own browser.
   Carlo with seeded RNG.
 - `src/data/` — starting balances (June 2026), editable default assumptions,
   tax tables, approximate 1928–2023 real-return series for bootstrapping.
-- `src/ui/` — React app. Monte Carlo runs in a Web Worker, debounced.
-- `scripts/` — `diag.ts` (MC summary + ruined-path dump), `sweep.ts`
-  (scenario sweeps). Run with `npx tsx scripts/diag.ts`.
+- `src/ui/` — React app. Monte Carlo runs in a Web Worker, debounced. The
+  dispatch itself lives in `engineJobs.ts`, shared by the worker and by a
+  main-thread fallback used when a host forbids creating one; results are
+  identical either way, a run just blocks paint instead of streaming in.
+- `scripts/` — `inline-build.mjs`, the single-file packager behind
+  `npm run build:single`.
 
 ## Modeling notes (read before trusting numbers)
 
